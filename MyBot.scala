@@ -1,4 +1,4 @@
-import scala.math.sqrt
+import scala.math.abs
 
 object MyBot extends App {
   new AntsGame().run(new MyBot)
@@ -10,9 +10,10 @@ class MyBot extends Bot {
   val directions = List(North, East, South, West)
 
   val lostAntCost = 100d
-  val foodAttraction = 3.0d
+  val foodAttraction = 6d
+  val waterRepulsion = 0.003d
 
-  //val lowScoreThreshold = -150
+  val lowScoreThreshold = 0.2d
 
   def ordersFrom(game: Game): Move = {
     bestMove(game, Set.empty, game.board.myAnts.values.toList)
@@ -44,7 +45,11 @@ class MyBot extends Bot {
   }
 
   def scoreOf(game: Game, move: Move): Double = {
-    0d + lostAntCosts(game, move) + foodDrive(game, move)
+    val casualties = lostAntCosts(game, move)
+    val food = foodDrive(game, move)
+    val obstacles = obstacleAvoidance(game, move)
+
+    0d + casualties + food + obstacles
   }
 
   def lostAntCosts(game: Game, move: Move): Double = {
@@ -66,18 +71,34 @@ class MyBot extends Bot {
 
   def foodDrive(game: Game, move: Move): Double = {
     val foodBonuses = for {
-      order <- move
       (foodTile, food) <- game.board.food
-      if movesToward(food, order)
     } yield {
-      val dist = distance(foodTile, order.tile)
-      if (dist > 0)
-        foodAttraction / (dist * dist)
-      else
-        foodAttraction
+      ((move filter { (order: Order) => movesToward(food, order) }).toList sortBy { order =>
+        distance(foodTile, order.tile)
+      } take 1 map { order =>
+        val dist = distance(foodTile, order.tile)
+        if (dist > 0)
+          foodAttraction / (dist * dist)
+        else
+          foodAttraction
+      }).sum
     }
 
     foodBonuses.sum
+  }
+
+  def obstacleAvoidance(game: Game, move: Move): Double = {
+    (for {
+      order <- move
+      (waterTile, water) <- game.board.water
+      if movesToward(water, order)
+    } yield {
+      val dist = distance(waterTile, order.tile)
+      if (dist > 0)
+        0d - (waterRepulsion / (dist * dist))
+      else
+        0d - waterRepulsion
+    }).sum
   }
 
   def positionsAfter(game: Game, move: Move): Map[Tile, Iterable[Positionable]] = {
@@ -92,7 +113,7 @@ class MyBot extends Bot {
   def distance(a: Tile, b: Tile): Double = {
     val x = b.column - a.column
     val y = b.row - a.row
-    sqrt(x*x + y*y)
+    abs(x) + abs(y)
   }
 
   def movesToward(goal: Positionable, order: Order): Boolean = order.point match {
