@@ -1,3 +1,5 @@
+import scala.math.sqrt
+
 object MyBot extends App {
   new AntsGame().run(new MyBot)
 }
@@ -7,7 +9,10 @@ class MyBot extends Bot {
   type Move = Set[Order]
   val directions = List(North, East, South, West)
 
-  val lostAntCost = 100
+  val lostAntCost = 100d
+  val foodAttraction = 3.0d
+
+  //val lowScoreThreshold = -150
 
   def ordersFrom(game: Game): Move = {
     bestMove(game, Set.empty, game.board.myAnts.values.toList)
@@ -38,14 +43,14 @@ class MyBot extends Bot {
     case Nil => partialMove
   }
 
-  def scoreOf(game: Game, move: Move): Int = {
-    0 + lostAntCosts(game, move)
+  def scoreOf(game: Game, move: Move): Double = {
+    0d + lostAntCosts(game, move) + foodDrive(game, move)
   }
 
-  def lostAntCosts(game: Game, move: Move): Int = {
+  def lostAntCosts(game: Game, move: Move): Double = {
     val positions = positionsAfter(game, move)
 
-    (0 /: positions) { (score, position) => 
+    (0d /: positions) { (score, position) =>
       val (tile, ants) = position
 
       if (ants.size > 1)
@@ -59,6 +64,22 @@ class MyBot extends Bot {
     }
   }
 
+  def foodDrive(game: Game, move: Move): Double = {
+    val foodBonuses = for {
+      order <- move
+      (foodTile, food) <- game.board.food
+      if movesToward(food, order)
+    } yield {
+      val dist = distance(foodTile, order.tile)
+      if (dist > 0)
+        foodAttraction / (dist * dist)
+      else
+        foodAttraction
+    }
+
+    foodBonuses.sum
+  }
+
   def positionsAfter(game: Game, move: Move): Map[Tile, Iterable[Positionable]] = {
     (Map.empty[Tile, List[Positionable]] /: move) { (positions, order) =>
       val antPos = order.tile
@@ -68,7 +89,20 @@ class MyBot extends Bot {
     }
   }
 
-  case class ScoredMove(val move: Move, val score: Int)
+  def distance(a: Tile, b: Tile): Double = {
+    val x = b.column - a.column
+    val y = b.row - a.row
+    sqrt(x*x + y*y)
+  }
+
+  def movesToward(goal: Positionable, order: Order): Boolean = order.point match {
+    case North => goal.tile.row < order.tile.row
+    case South => goal.tile.row > order.tile.row
+    case East => goal.tile.column > order.tile.column
+    case West => goal.tile.column < order.tile.column
+  }
+
+  case class ScoredMove(val move: Move, val score: Double)
   object ScoredMove {
     val empty: ScoredMove = new ScoredMove(Set.empty, -99999)
   }
