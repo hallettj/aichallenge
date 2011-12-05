@@ -1,4 +1,4 @@
-import scala.math.{abs, min, max}
+import scala.math.{abs, ceil, min, max}
 import scala.util.Random
 
 object MyBot extends App {
@@ -14,6 +14,7 @@ class MyBot extends Bot {
   var game: Game = null
   var lastMove: Move = Set.empty
   var inertia: Map[Tile, CardinalPoint] = Map.empty
+  var lastCentroids = List.empty[Tile]
 
   val lostAntCost = 1000d
   val foodAttraction = 300d
@@ -22,7 +23,7 @@ class MyBot extends Bot {
   val flockingScore = 3d
   val packingScore = 0.008d
 
-  val antsPerCluster = 4
+  val antsPerCluster = 4d
   val clusterMargin = 10
 
   def ordersFrom(game: Game): Move = {
@@ -45,8 +46,16 @@ class MyBot extends Bot {
   def antClusters(game: Game): Set[Board] = {
     val antCount = game.board.myAnts.size
     val ants = game.board.myAnts.values
-    val numClusters = max(1, antCount / antsPerCluster)
-    val centroids = ants take numClusters map { _.tile }
+    val numClusters = max(1, ceil(antCount / antsPerCluster)).toInt
+
+    val centroids = if (lastCentroids.size < numClusters) {
+      lastCentroids ++ (rand.shuffle(ants) take (numClusters - lastCentroids.size) map { _.tile })
+    } else if (lastCentroids.size > numClusters) {
+      lastCentroids take numClusters
+    } else {
+      lastCentroids
+    }
+
     val clusters = findClusters(ants, centroids, Set.empty[Set[MyAnt]])
 
     clusters map { cluster =>
