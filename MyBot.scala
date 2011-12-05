@@ -14,12 +14,12 @@ class MyBot extends Bot {
   var game: Game = GameInProgress()
   var lastMove: Move = Set.empty
   var inertia: Map[Tile, CardinalPoint] = Map.empty
-  var lastCentroids = List.empty[Tile]
+  var lastCentroids: Iterable[Tile] = List.empty
 
   val lostAntCost = 1000d
   val foodAttraction = 300d
   val waterRepulsion = 0.003d
-  val inertiaScore = 21d
+  val inertiaScore = 1d
   val flockingScore = 3d
   val packingScore = 0.008d
 
@@ -50,7 +50,16 @@ class MyBot extends Bot {
       }
     }
 
-    val move = makeSolutions()
+    val bestSolution = (emptyMove /: moves) { (move, clusterMoves) =>
+      move ++ clusterMoves.head
+    }
+    val alternateSolution = makeSolutions()
+
+    val move = {
+      val (scoreBest, _) = globalScoreOf(game.board, bestSolution)
+      val (scoreAlt, _) = globalScoreOf(game.board, alternateSolution)
+      if (scoreBest >= scoreAlt) bestSolution else alternateSolution
+    }
 
     lastMove = move
     inertia = (for (order <- move) yield {
@@ -65,13 +74,15 @@ class MyBot extends Bot {
     val ants = game.board.myAnts.values
     val numClusters = max(1, ceil(antCount / antsPerCluster)).toInt
 
-    val centroids = if (lastCentroids.size < numClusters) {
-      lastCentroids ++ (rand.shuffle(ants) take (numClusters - lastCentroids.size) map { _.tile })
-    } else if (lastCentroids.size > numClusters) {
-      lastCentroids take numClusters
-    } else {
-      lastCentroids
-    }
+    // val centroids = if (lastCentroids.size < numClusters) {
+    //   lastCentroids ++ (rand.shuffle(ants) take (numClusters - lastCentroids.size) map { _.tile })
+    // } else if (lastCentroids.size > numClusters) {
+    //   lastCentroids take numClusters
+    // } else {
+    //   lastCentroids
+    // }
+
+    val centroids = ants take numClusters map { _.tile }
 
     val clusters = findClusters(ants, centroids, Set.empty[Set[MyAnt]])
 
@@ -143,7 +154,7 @@ class MyBot extends Bot {
 
     val casualties = lostAntCosts(board, move, positions)
     val food = foodDrive(board, move)
-    val obstacles = obstacleAvoidance(board, move)
+    val obstacles = 0d  // obstacleAvoidance(board, move)
     val explore = exploration(board, move, positions)
     val flock = flocking(board, move)
     val pack = packing(board, move, positions)
@@ -175,7 +186,49 @@ class MyBot extends Bot {
     }
   }
 
+  // def foodDrive(board: Board, move: Move): Double = {
+  //   if (board.food.size > 0) {
+  //     val ants = board.myAnts.values
+  //     val epicenter = centroid(ants)
+  //     val (closestFood, dist) = (for {
+  //       (foodTile, food) <- board.food
+  //     } yield {
+  //       (foodTile, distance(food, epicenter))
+  //     }) minBy { _._2 }
+
+  //     val bonus = if (dist > 0)
+  //       foodAttraction / (dist * dist)
+  //     else
+  //       foodAttraction
+
+  //     (for {
+  //       order <- move
+  //       if movesToward(closestFood, order)
+  //     } yield bonus).sum
+  //   } else {
+  //     0d
+  //   }
+  // }
+
   def foodDrive(board: Board, move: Move): Double = {
+    if (board.food.size > 0) {
+      val (numApproachers, dist) = (for {
+        (foodTile, food) <- board.food
+      } yield {
+        val approachers = for {
+          order <- move
+          if movesToward(foodTile, order)
+        } yield distance(foodTile, order.tile)
+        (approachers.size, approachers.sum / approachers.size)
+      }) maxBy { _._1 }
+
+      val bonus = if (dist > 0) foodAttraction / (dist * dist) else foodAttraction
+      numApproachers * bonus
+    } else {
+      0d
+    }
+
+
     val foodBonuses = for {
       (foodTile, food) <- board.food
     } yield {
