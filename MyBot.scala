@@ -11,7 +11,7 @@ class MyBot extends Bot {
   val rand = new Random(System.currentTimeMillis)
 
   val directions = List(North, East, South, West)
-  var game: Game = null
+  var game: Game = GameInProgress()
   var lastMove: Move = Set.empty
   var inertia: Map[Tile, CardinalPoint] = Map.empty
   var lastCentroids = List.empty[Tile]
@@ -19,11 +19,12 @@ class MyBot extends Bot {
   val lostAntCost = 1000d
   val foodAttraction = 300d
   val waterRepulsion = 0.003d
-  val inertiaScore = 12d
+  val inertiaScore = 21d
   val flockingScore = 3d
   val packingScore = 0.008d
 
   val antsPerCluster = 4d
+  val numCandidateMoves = 3
   val clusterMargin = 10
 
   def ordersFrom(game: Game): Move = {
@@ -31,9 +32,25 @@ class MyBot extends Bot {
 
     val clusters = antClusters(game)
     val emptyMove: Move = Set.empty
-    val move = (emptyMove /: clusters) { (move, cluster) =>
-      move ++ bestMove(cluster, emptyMove, cluster.myAnts.values.toList)
+
+    val moves: Iterable[Iterable[Move]] = clusters map { cluster =>
+      bestMoves(cluster, emptyMove, cluster.myAnts.values.toList)
     }
+
+    def makeSolutions(): Move = {
+      val solutions = Range(0, numCandidateMoves) map { n =>
+        val movesForEachCluster = for (clusterMoves <- moves) yield rand.shuffle(clusterMoves).head
+        (emptyMove /: movesForEachCluster) { (move, clusterMove) =>
+          move ++ clusterMove
+        }
+      }
+      solutions maxBy { solution =>
+        val (score, message) = globalScoreOf(game.board, solution)
+        score
+      }
+    }
+
+    val move = makeSolutions()
 
     lastMove = move
     inertia = (for (order <- move) yield {
@@ -102,27 +119,23 @@ class MyBot extends Bot {
     }
   }
 
-  def bestMove(board: Board, partialMove: Move, pendingAnts: List[MyAnt]): Move = pendingAnts match {
+  def bestMoves(board: Board, partialMove: Move, pendingAnts: List[MyAnt]): Iterable[Move] = pendingAnts match {
     case ant :: remainingAnts => {
       val possibleMoves = for {
         direction <- rand.shuffle(directions).par
         possibleMove = partialMove + Order(ant.tile, direction)
-      } yield {
-        val completeMove = bestMove(board, possibleMove, remainingAnts)
-        val (score, message) = scoreOf(board, completeMove)
-        ScoredMove(completeMove, score, message)
+        completeMove <- bestMoves(board, possibleMove, remainingAnts) take numCandidateMoves
+      } yield completeMove
+
+      val sortedMoves = possibleMoves.toList sortBy { move =>
+        val (score, message) = scoreOf(board, move)
+        -score
       }
 
-      val bestScoredMove = (ScoredMove.empty /: possibleMoves) { (bestMove, possibleMove) =>
-        if (possibleMove.score > bestMove.score)
-          possibleMove
-        else
-          bestMove
-      }
 
-      bestScoredMove.move
+      sortedMoves
     }
-    case Nil => partialMove
+    case Nil => List(partialMove)
   }
 
   def scoreOf(board: Board, move: Move): (Double, String) = {
@@ -138,6 +151,13 @@ class MyBot extends Bot {
     val message = "casualties: "+ casualties +", food: "+ food +", obstacles: "+ obstacles +", explore: "+ explore +", flock: "+ flock +", pack: "+ pack
 
     (0d + casualties + food + obstacles + explore + flock + pack, message)
+  }
+
+  def globalScoreOf(board: Board, move: Move): (Double, String) = {
+    val positions = positionsAfter(board, move)
+    val casualties = lostAntCosts(board, move, positions)
+    val message = "global casualties: "+ casualties
+    (0d + casualties, message)
   }
 
   def lostAntCosts(board: Board, move: Move, positions: Map[Tile, Iterable[Positionable]]): Double = {
