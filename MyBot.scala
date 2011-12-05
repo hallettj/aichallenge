@@ -1,4 +1,5 @@
 import scala.math.{abs, min, max}
+import scala.util.Random
 
 object MyBot extends App {
   new AntsGame().run(new MyBot)
@@ -7,7 +8,9 @@ object MyBot extends App {
 class MyBot extends Bot {
 
   type Move = Set[Order]
-  val directions = List(North, East, South, West).par
+  val rand = new Random(System.currentTimeMillis)
+
+  val directions = List(North, East, South, West)
   var game: Game = null
   var lastMove: Move = Set.empty
   var inertia: Map[Tile, CardinalPoint] = Map.empty
@@ -15,8 +18,9 @@ class MyBot extends Bot {
   val lostAntCost = 1000d
   val foodAttraction = 300d
   val waterRepulsion = 0.003d
-  val inertiaScore = 6d
+  val inertiaScore = 12d
   val flockingScore = 3d
+  val packingScore = 0.008d
 
   val antsPerCluster = 4
   val clusterMargin = 10
@@ -31,7 +35,7 @@ class MyBot extends Bot {
     }
 
     lastMove = move
-    (for (order <- move) yield {
+    inertia = (for (order <- move) yield {
       (game.tile(order.point).of(order.tile), order.point)
     }).toMap
 
@@ -108,7 +112,7 @@ class MyBot extends Bot {
   def bestMove(board: Board, partialMove: Move, pendingAnts: List[MyAnt]): Move = pendingAnts match {
     case ant :: remainingAnts => {
       val possibleMoves = for {
-        direction <- directions
+        direction <- rand.shuffle(directions).par
         possibleMove = partialMove + Order(ant.tile, direction)
       } yield {
         val completeMove = bestMove(board, possibleMove, remainingAnts)
@@ -136,10 +140,11 @@ class MyBot extends Bot {
     val obstacles = obstacleAvoidance(board, move)
     val explore = exploration(board, move, positions)
     val flock = flocking(board, move)
+    val pack = packing(board, move, positions)
 
-    val message = "casualties: "+ casualties +", food: "+ food +", obstacles: "+ obstacles +", explore: "+ explore +", flock: "+ flock
+    val message = "casualties: "+ casualties +", food: "+ food +", obstacles: "+ obstacles +", explore: "+ explore +", flock: "+ flock +", pack: "+ pack
 
-    (0d + casualties + food + obstacles + explore + flock, message)
+    (0d + casualties + food + obstacles + explore + flock + pack, message)
   }
 
   def lostAntCosts(board: Board, move: Move, positions: Map[Tile, Iterable[Positionable]]): Double = {
@@ -207,15 +212,40 @@ class MyBot extends Bot {
   }
 
   def flocking(board: Board, move: Move): Double = {
-    val antCount = board.myAnts.size
-    val centerCol = (board.myAnts.values map { ant => ant.tile.column }).sum / antCount
-    val centerRow = (board.myAnts.values map { ant => ant.tile.row }).sum / antCount
-    val epicenter = Tile(centerCol, centerRow)
+    val Order(leaderTile, leaderDirection) = leader(board, move)
+    val goal = game.tile(leaderDirection).of(leaderTile)
 
     (for {
-        order <- move
-        if movesToward(epicenter, order)
+      order <- move
+      if order.tile != leaderTile && movesToward(goal, order)
     } yield flockingScore).sum
+  }
+
+  def packing(board: Board, move: Move, positions: Map[Tile, Iterable[Positionable]]): Double = {
+    val Order(leaderTile, leaderDirection) = leader(board, move)
+    val goal = game.tile(leaderDirection).of(leaderTile)
+
+    (for {
+      (tile, ants) <- positions
+      ant <- ants
+    } yield {
+      val dist = distance(goal, tile)
+      -(packingScore * dist * dist)
+    }).sum
+  }
+
+  def leader(board: Board, move: Move): Order = {
+    val directionCounts = move groupBy { _.point } map { e => (e._1, e._2.size) }
+    val prevailing = (directionCounts maxBy { _._2 })._1
+    val leaderRank: Order => Int = prevailing match {
+      case North => { order => order.tile.row }
+      case South => { order => -order.tile.row }
+      case East => { order => -order.tile.column }
+      case West => { order => order.tile.column }
+    }
+    // val leaderTile = (move minBy { leaderRank(_) }).tile
+    // game.tile(prevailing).of(leaderTile)
+    move minBy { leaderRank(_) }
   }
 
   def positionsAfter(board: Board, move: Move): Map[Tile, Iterable[Positionable]] = {
