@@ -28,7 +28,7 @@ class MyBot extends Bot {
   def ordersFrom(game: Game): Move = {
     this.game = game
 
-    val clusters = findClusters(game)
+    val clusters = antClusters(game)
     val emptyMove: Move = Set.empty
     val move = (emptyMove /: clusters) { (move, cluster) =>
       move ++ bestMove(cluster, emptyMove, cluster.myAnts.values.toList)
@@ -42,57 +42,41 @@ class MyBot extends Bot {
     move
   }
 
-  def findClusters(game: Game): Set[Board] = {
-    val params = game.parameters
-    findClusters(game.board, Tile(0, 0), Tile(params.rows, params.columns), 'horizontal)
-  }
+  def antClusters(game: Game): Set[Board] = {
+    val antCount = game.board.myAnts.size
+    val ants = game.board.myAnts.values
+    val numClusters = max(1, antCount / antsPerCluster)
+    val centroids = ants take numClusters map { _.tile }
+    val clusters = findClusters(ants, centroids, Set.empty[Set[MyAnt]])
 
-  def findClusters(board: Board, upperLeft: Tile, lowerRight: Tile, split: Symbol): Set[Board] = {
-    val nextSplit = if (split == 'horizontal) 'vertical else 'horizontal
-
-    if (board.myAnts.isEmpty) {
-      Set.empty
-    } else if (board.myAnts.size <= antsPerCluster) {
-      Set(board)
-    } else {
-      val antCount = board.myAnts.size
-
-      val ants = board.myAnts.toList.sortBy { (antPosition) =>
-        val (tile, ant) = antPosition
-        if (split == 'horizontal) tile.row else tile.column
-      }
-
-      val (antsA, antsB) = ants.splitAt(antCount / 2)
-
-      val (upperLeftA, lowerRightA) = boundsFor(antsA.map(_._2))
-      val (upperLeftB, lowerRightB) = boundsFor(antsB.map(_._2))
-
-      val boardA = Board(
-        antsA.toMap,
-        select(board.enemyAnts, upperLeftA, lowerRightA),
-        select(board.water, upperLeftA, lowerRightA),
-        select(board.food, upperLeftA, lowerRightA),
-        select(board.corpses, upperLeftA, lowerRightA),
-        select(board.myHills, upperLeftA, lowerRightA),
-        select(board.enemyHills, upperLeftA, lowerRightA)
+    clusters map { cluster =>
+      val (upperLeft, lowerRight) = boundsFor(cluster)
+      val board = game.board
+      Board(
+        (cluster map { ant => (ant.tile -> ant) }).toMap,
+        select(board.enemyAnts, upperLeft, lowerRight),
+        select(board.water, upperLeft, lowerRight),
+        select(board.food, upperLeft, lowerRight),
+        select(board.corpses, upperLeft, lowerRight),
+        select(board.myHills, upperLeft, lowerRight),
+        select(board.enemyHills, upperLeft, lowerRight)
       )
-
-      val boardB = Board(
-        antsB.toMap,
-        select(board.enemyAnts, upperLeftB, lowerRightB),
-        select(board.water, upperLeftB, lowerRightB),
-        select(board.food, upperLeftB, lowerRightB),
-        select(board.corpses, upperLeftB, lowerRightB),
-        select(board.myHills, upperLeftB, lowerRightB),
-        select(board.enemyHills, upperLeftB, lowerRightB)
-      )
-
-      findClusters(boardA, upperLeftA, lowerRightA, nextSplit) ++
-      findClusters(boardB, upperLeftB, lowerRightB, nextSplit)
     }
   }
 
-  def boundsFor(items: List[Positionable]): (Tile, Tile) = {
+  def findClusters[A <: Positionable](elements: Iterable[A], centroids: Iterable[Tile], clusters: Set[Set[A]]): Set[Set[A]] = {
+    val newCentroids = if (clusters.isEmpty) centroids else clusters map { centroid(_) }
+    val newClusters = ((elements groupBy { element =>
+      centroids minBy { centroid => distance(element, centroid) }
+    }).values map { _.toSet }).toSet
+
+    if (newClusters == clusters)
+      clusters
+    else
+      findClusters(elements, newCentroids, newClusters)
+  }
+
+  def boundsFor(items: Iterable[Positionable]): (Tile, Tile) = {
     val first = items.head.tile
     val last = items.last.tile
     (Tile(first.column - clusterMargin, first.row - clusterMargin),
@@ -263,6 +247,13 @@ class MyBot extends Bot {
     abs(x) + abs(y)
   }
 
+  def centroid(elements: Iterable[Positionable]): Tile = {
+    val count = elements.size
+    val centerCol = (elements map { _.column }).sum / count
+    val centerRow = (elements map { _.row }).sum / count
+    Tile(centerCol, centerRow)
+  }
+
   def movesToward(goal: Tile, order: Order): Boolean = order.point match {
     case North => goal.row < order.tile.row
     case South => goal.row > order.tile.row
@@ -274,4 +265,6 @@ class MyBot extends Bot {
   object ScoredMove {
     val empty: ScoredMove = new ScoredMove(Set.empty, -99999, "")
   }
+
+  implicit def positionable2Tile(p: Positionable): Tile = p.tile
 }
